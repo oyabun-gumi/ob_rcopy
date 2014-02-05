@@ -1,0 +1,12 @@
+{application, ob_rcopy,
+ [
+  {description, ""},
+  {vsn, "0.1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { ob_rcopy_app, []}},
+  {env, []}
+ ]}.
