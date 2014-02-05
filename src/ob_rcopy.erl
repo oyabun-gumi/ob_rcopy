@@ -1,5 +1,8 @@
-%% @author yamaguchi
-%% @doc @todo Add description to rcopy.
+%% --------------------------------------------------------------------
+%% @author Daisuke YAMAGUCHI <gutio81@gmail.com>
+%% @version 0.0.1
+%% @end
+%% --------------------------------------------------------------------
 
 -module(ob_rcopy).
 
@@ -8,7 +11,7 @@
 %% ====================================================================
 %% API functions
 %% ====================================================================
--export([copy/3, file_copy/3, dir_copy/3]).
+-export([copy/3]).
 
 copy(Source = {SourceNode, SourcePath}, Dest = {DestNode, DestPath}, Chunk) ->
     case rpc:call(SourceNode, file, read_file_info, [SourcePath]) of
@@ -21,7 +24,20 @@ copy(Source = {SourceNode, SourcePath}, Dest = {DestNode, DestPath}, Chunk) ->
             skip;
         {error, Reason} ->
             {error, Reason}
-    end.
+    end;
+
+copy(SourcePath, Dest = {_DestNode, _DestPath}, Chunk) ->
+    copy({node(), SourcePath}, Dest, Chunk);
+
+copy(Source = {_SourceNode, _SourcePath}, DestPath, Chunk) ->
+    copy(Source, {node(), DestPath}, Chunk);
+
+copy(SourcePath, DestPath, Chunk) ->
+    copy({node(), SourcePath}, {node(), DestPath}, Chunk).
+
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
 
 dir_copy({SourceNode, SourcePath}, {DestNode, DestPath}, Chunk) ->
     case rpc:call(SourceNode, file, list_dir, [SourcePath]) of
@@ -42,16 +58,12 @@ file_copy(Source = {SourceNode, SourcePath}, Dest, Chunk) ->
         {ok, FileInfo} when FileInfo#file_info.size > Chunk -> 
             split_file_copy(Source, Dest, Chunk);
         {ok, _FileInfo} -> 
-            file_copy(Source, Dest);
+            file_copy_at_once(Source, Dest);
         {error, Reason} ->
             {error, Reason}
     end.
 
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
-
-file_copy({SourceNode, SourcePath}, {DestNode, DestPath}) ->
+file_copy_at_once({SourceNode, SourcePath}, {DestNode, DestPath}) ->
     {ok, Bin} = rpc:call(SourceNode, file, read_file, [SourcePath]),
     rpc:call(DestNode, file, write_file, [DestPath, Bin]).
 
@@ -61,14 +73,21 @@ split_file_copy({SourceNode, SourcePath}, {DestNode, DestPath}, Chunk) ->
     try
         split_file_copy_loop(SourceNode, ReadFile, DestNode, WriteFile, Chunk)
     after
-        ok = rpc:call(SourceNode, file, close, [ReadFile]),
-        ok = rpc:call(DestNode, file, close, [WriteFile])
+        rpc:call(SourceNode, file, close, [ReadFile]),
+        rpc:call(DestNode, file, close, [WriteFile])
     end.
 
 split_file_copy_loop(SourceNode, ReadFile, DestNode, WriteFile, Chunk) ->
-    {ok, Read} = rpc:call(SourceNode, file, read, [ReadFile, Chunk]),
-    ok = rpc:call(DestNode, file, write, [WriteFile, Read]),
-    case length(Read) of
-        Chunk -> split_file_copy_loop(SourceNode, ReadFile, DestNode, WriteFile, Chunk);
-        _ -> ok
+    Read = rpc:call(SourceNode, file, read, [ReadFile, Chunk]),
+    case Read of
+        {ok, ReadData} -> 
+            case rpc:call(DestNode, file, write, [WriteFile, ReadData]) of
+                ok ->
+                    split_file_copy_loop(SourceNode, ReadFile, DestNode, WriteFile, Chunk);
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        eof -> ok;
+        {error, Reason} ->
+            {error, Reason}
     end.
